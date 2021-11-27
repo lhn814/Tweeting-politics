@@ -1,0 +1,249 @@
+---
+title: "draft_final_project"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(haven)
+library(questionr)
+library(tidyverse)
+library(skimr)
+library(kohonen)
+library(scales)
+library(amerika)
+
+dataset <- read_sav("/Users/Nikki/Desktop/MACS_40800/research_project/Pew_Twitter_Study_for_release.sav")
+survey <- dataset %>%
+  select(SOCTRUST2, COMATTACH, GSSTRUST2, GSSTRUST3, # social trust questions (group)
+         TRUSTCONGa, TRUSTCONGb, TRUSTCONGc, TRUSTCONGd, TRUSTCONGe,  # legislator responsiveness (group)
+         TWITTER_USE, POLTWEET, # twitter usage
+         POL1DT, FAIRTRT, WOMENOPPS, IMMCULT2, ECONFAIR2, POLCRCT, 
+         NATPROBSa, NATPROBSb, NATPROBSc, NATPROBSd, NATPROBSe, NATPROBSf,
+         NATPROBSg, NATPROBSh, NATPROBSi, NATPROBSj, # attitudes towards various issues (group)
+         THERMOa, THERMOb, THERMOc, THERMOd, THERMOe, THERMOf, THERMOg, THERMOh, # feeling thermometer (group)
+         QBELIEF3, QBELIEF4, TWKNOW, # friends on twitter
+         PARTY, REPANTIP, DEMANTIP, # party affiliation (layer)
+         CIVIC_ENG_ACTYRa, CIVIC_ENG_ACTYRb, CIVIC_ENG_ACTYRc, # physical activities
+         RELIMP, # religion identity (layer)
+         ) %>%
+  mutate(strong_reli_ident = case_when(RELIMP == 1 ~ 1, RELIMP == 2 ~ 1, TRUE ~ 0),
+         party = case_when(PARTY == 1 ~ 2, PARTY == 2 ~ 1, TRUE ~ 0),
+         polar = ifelse(is.na(REPANTIP), 
+                        case_when(DEMANTIP == 1 ~ 1,
+                                  DEMANTIP == 2 ~ 2,
+                                  DEMANTIP == 3 ~ 3,
+                                  is.na(DEMANTIP) ~ 3),
+                        case_when(REPANTIP == 1 ~ 1,
+                                  REPANTIP == 2 ~ 2,
+                                  REPANTIP == 3 ~ 3,
+                                  is.na(REPANTIP) ~ 3)),
+         twitter_u = ifelse(TWITTER_USE <= 3, 1, 2))
+skim(survey)
+View(survey)
+
+survey_trust <- survey %>%
+  select(SOCTRUST2, COMATTACH, GSSTRUST2, GSSTRUST3, # social trust questions (group)
+         TRUSTCONGa, TRUSTCONGb, TRUSTCONGc, TRUSTCONGd, TRUSTCONGe) %>%  # legislator responsiveness (group)
+  as_tibble()
+skim(survey_trust)
+
+write.csv(survey_trust, "survey_trust.csv")
+survey_trust_df <- read.csv("survey_trust.csv") %>% 
+  select(SOCTRUST2, COMATTACH, GSSTRUST2, GSSTRUST3,
+         TRUSTCONGa, TRUSTCONGb, TRUSTCONGc, TRUSTCONGd, TRUSTCONGe) %>% 
+  as_tibble()
+
+survey_trust_scaled <- data.frame(lapply(survey_trust_df, function(x) rescale(x))) %>% 
+  as.matrix()
+
+skim(survey_trust_scaled)
+```
+
+Initial fit (without tuning hyperparameters)
+
+```{r, fig.width=7, fig.height=7}
+search_grid <- somgrid(xdim = 10, 
+                       ydim = 10, 
+                       topo = "rectangular",
+                       neighbourhood.fct = "gaussian") 
+
+# Initial fit
+som_fit_i <- som(survey_trust_scaled, # scaled input data (minus party ID)
+               grid = search_grid, # grid we set up
+               alpha = c(0.1, 0.001), # learning rate; (default vals decline from .05 to .01)
+               radius = 1, # neighborhood size;
+               rlen = 500, # epochs - number of times the complete data is presented to alg
+               dist.fcts = "euclidean", # distance function
+               mode = "batch") # alg type - batch, online, etc.
+
+plot(som_fit_i, type = "changes")  # the distance plateaus after 500 iterations
+plot(som_fit_i, type = "count", shape = "straight")
+plot(som_fit_i, type = "dist.neighbours", shape = "straight")
+plot(som_fit_i, shape = "straight")
+
+# Coloring 
+point_colors <- c("dodgerblue3", "firebrick1", "olivedrab3")
+
+## By Party
+plot(som_fit_i, 
+     type = "mapping", 
+     shape = "straight",
+     pch = 21,
+     bg = point_colors[as.factor(survey$party)],
+     bgcol = NULL,
+     main = "Coloring by Party")
+
+## By Polarizaiton
+plot(som_fit_i, 
+     type = "mapping", 
+     shape = "straight",
+     pch = 21,
+     bg = point_colors[as.factor(survey$polar)],
+     bgcol = NULL,
+     main = "Coloring by Polarization")
+
+## By Twitter Usage
+plot(som_fit_i, 
+     type = "mapping", 
+     shape = "straight",
+     pch = 21,
+     bg = point_colors[as.factor(survey$twitter_u)],
+     bgcol = NULL,
+     main = "Coloring by Twitter Usage")
+
+## By Religious Identity
+plot(som_fit_i, 
+     type = "mapping", 
+     shape = "straight",
+     pch = 21,
+     bg = point_colors[as.factor(survey$strong_reli_ident)],
+     bgcol = NULL,
+     main = "Coloring by Religious Identity")
+
+## By Trump supporter or adversary
+plot(som_fit_i, 
+     type = "mapping", 
+     shape = "straight",
+     pch = 21,
+     bg = point_colors[as.factor(survey$POL1DT)],
+     bgcol = NULL,
+     main = "Coloring by Trump supporter or adversary")
+
+## By Perceptions of Fairness in the Economic System
+plot(som_fit, 
+     type = "mapping", 
+     shape = "straight",
+     pch = 21,
+     bg = point_colors[as.factor(survey$ECONFAIR2)],
+     bgcol = NULL,
+     main = "Coloring by Perceptions of Fairness in the Economic System")
+
+```
+
+Tuned model
+
+```{r, fig.width=7, fig.height=7}
+
+# Tuning hyperparameters based on the quantization error (QE)
+radius_size = 1
+learn_rate = c(0.1,0.001)
+len = 500
+fit_som_qe <- function(radius_size, learn_rate, len){
+  s <- som(survey_trust_scaled,
+           grid = search_grid,
+           alpha = learn_rate,
+           radius = radius_size, 
+           rlen = len, 
+           dist.fcts = "euclidean", 
+           mode = "batch")
+  mean(s$distances)
+}
+
+g <- expand.grid(r = 1:10, a_max = c(0.5, 0.1, 0.01), a_min = 0.001, len = c(500, 1000)) %>% 
+  as_tibble() %>% 
+  mutate(qe = 0)
+
+set.seed(12345)
+for (i in 1:nrow(g)){
+  g$qe[i] <- fit_som_qe(g$r[i], c(g$a_max[i], g$a_min[i]), g$len[i])
+}
+head(g[order(g$qe),], 5)  # inspecting the hyperparameters with the lowest QE
+
+# Using the tuned hyperparameters
+set.seed(12345)
+som_fit <- som(survey_trust_scaled,
+               grid = search_grid,
+               alpha = c(g[which.min(g$qe), ]$a_max, g[which.min(g$qe), ]$a_min), 
+               radius = g[which.min(g$qe), ]$r, 
+               rlen = g[which.min(g$qe), ]$len, 
+               dist.fcts = "euclidean", 
+               mode = "batch") 
+
+plot(som_fit, type = "changes")  # the distance plateaus after 500 iterations
+plot(som_fit, type = "count", shape = "straight")
+plot(som_fit, type = "dist.neighbours", shape = "straight")
+plot(som_fit, shape = "straight")
+
+# Coloring 
+## By Party
+plot(som_fit, 
+     type = "mapping", 
+     shape = "straight",
+     pch = 21,
+     bg = point_colors[as.factor(survey$party)],
+     bgcol = NULL,
+     main = "Coloring by Party")
+
+## By Polarizaiton
+plot(som_fit, 
+     type = "mapping", 
+     shape = "straight",
+     pch = 21,
+     bg = point_colors[as.factor(survey$polar)],
+     bgcol = NULL,
+     main = "Coloring by Polarization")
+
+## By Twitter Usage
+plot(som_fit, 
+     type = "mapping", 
+     shape = "straight",
+     pch = 21,
+     bg = point_colors[as.factor(survey$twitter_u)],
+     bgcol = NULL,
+     main = "Coloring by Twitter Usage")
+
+## By Religious Identity
+plot(som_fit, 
+     type = "mapping", 
+     shape = "straight",
+     pch = 21,
+     bg = point_colors[as.factor(survey$strong_reli_ident)],
+     bgcol = NULL,
+     main = "Coloring by Religious Identity")
+
+## By Trump supporter or adversary
+plot(som_fit, 
+     type = "mapping", 
+     shape = "straight",
+     pch = 21,
+     bg = point_colors[as.factor(survey$POL1DT)],
+     bgcol = NULL,
+     main = "Coloring by Trump supporter or adversary")
+
+## By Perceptions of Fairness in the Economic System
+plot(som_fit, 
+     type = "mapping", 
+     shape = "straight",
+     pch = 21,
+     bg = point_colors[as.factor(survey$ECONFAIR2)],
+     bgcol = NULL,
+     main = "Coloring by Perceptions of Fairness in the Economic System")
+
+
+```
+
+

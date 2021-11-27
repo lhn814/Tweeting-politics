@@ -1,0 +1,250 @@
+---
+title: "Twitter"
+author: "Hanning Luo"
+date: "5/6/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning=F, message=F}
+library(tidyverse)
+library(haven)
+library(arules)
+twitter <- read_sav("Pew_Twitter_Study_for_release.sav")
+df <- twitter %>%
+  select(SOCTRUST2, COMATTACH, GSSTRUST2, GSSTRUST3, # social trust questions (group)
+         TRUSTCONGa, TRUSTCONGb, TRUSTCONGc, TRUSTCONGd, TRUSTCONGe,  # legislator responsiveness (group)
+         TWITTER_USE, POLTWEET, # twitter usage
+         POL1DT, FAIRTRT, WOMENOPPS, IMMCULT2, ECONFAIR2, POLCRCT, 
+         NATPROBSa, NATPROBSb, NATPROBSc, NATPROBSd, NATPROBSe, NATPROBSf,
+         NATPROBSg, NATPROBSh, NATPROBSi, NATPROBSj, # attitudes towards various issues (group)
+         THERMOa, THERMOb, THERMOc, THERMOd, THERMOe, THERMOf, THERMOg, THERMOh, # feeling thermometer (group)
+         QBELIEF3, QBELIEF4, TWKNOW, # friends on twitter
+         PARTY, REPANTIP, DEMANTIP, # party affiliation (layer)
+         CIVIC_ENG_ACTYRa, CIVIC_ENG_ACTYRb, CIVIC_ENG_ACTYRc, # physical activities
+         RELIMP, # religion identity (layer)
+         ) %>%
+  mutate(strong_reli_ident = case_when(RELIMP == 1 ~ 1, RELIMP == 2 ~ 1, TRUE ~ 0),
+         party = case_when(PARTY == 1 ~ 2, PARTY == 2 ~ 1, TRUE ~ 0))
+```
+
+```{r}
+response <- df %>%
+  summarise(social_trust = case_when(SOCTRUST2 == 1 ~ "high trust",
+                                     SOCTRUST2 == 2 ~ "low trust"),
+            community = case_when(COMATTACH <= 2 ~ "high attachment",
+                                  COMATTACH >= 3 ~ "low attachment"),
+            fairness = case_when(GSSTRUST2 == 1 ~ "fair society",
+                                 GSSTRUST2 == 2 ~ "unfair society"),
+            assistance = case_when(GSSTRUST3 == 1 ~ "social assistance",
+                                   GSSTRUST3 == 2 ~ "lack assistance"),
+            congress1 = case_when(TRUSTCONGa <= 2 ~ "representation",
+                                  TRUSTCONGa >= 3 ~ "low representation"),
+            congress2 = case_when(TRUSTCONGb <= 2 ~ "public interests",
+                                  TRUSTCONGb >= 3 ~ "no public interests"),
+            congress3 = case_when(TRUSTCONGc <= 2 ~ "fair distribution",
+                                  TRUSTCONGc >= 3 ~ "unfair distribution"),
+            congress4 = case_when(TRUSTCONGd <= 2 ~ "reliable statements",
+                                  TRUSTCONGd >= 3 ~ "unreliable statements"),
+            congress5 = case_when(TRUSTCONGe <= 2 ~ "responsiblity",
+                                  TRUSTCONGe >= 3 ~ "no responsiblity"),
+            twitter1 = case_when(TWITTER_USE <= 3 ~ "frequent use",
+                                 TWITTER_USE >= 4 ~ "infrequent use"),
+            twitter2 = case_when(POLTWEET == 1 ~ "never tweet",
+                                 POLTWEET == 2 ~ "infrequent tweet",
+                                 POLTWEET == 3 ~ "frequent tweet"),
+            trump = case_when(POL1DT == 1 ~ "Trump supporter",
+                              POL1DT == 2 ~ "Trump adversary"),
+            fair_race = case_when(FAIRTRT == 1 ~ "unfair for black",
+                                  FAIRTRT == 2 ~ "unfair for white",
+                                  FAIRTRT == 3 ~ "equal race"),
+            fair_gender = case_when(WOMENOPPS == 1 ~ "equal gender",
+                                    WOMENOPPS == 2 ~ "unfair for women"),
+            fair_culture = case_when(IMMCULT2 == 1 ~ "xenophobic",
+                                     IMMCULT2 == 2 ~ "not xenophobic"),
+            fair_econ = case_when(ECONFAIR2 == 1 ~ "unfair economy",
+                                  ECONFAIR2 == 2 ~ "fair economy"),
+            offense_language = case_when(POLCRCT == 1 ~ "defensive",
+                                         POLCRCT == 2 ~ "offensive"),
+            social1 = case_when(NATPROBSa <= 2 ~ "healthcare concern",
+                                NATPROBSa >= 3 ~ "healthcare apathy"),
+            social2 = case_when(NATPROBSb <= 2 ~ "racism concern",
+                                NATPROBSb >= 3 ~ "racism apathy"),
+            social3 = case_when(NATPROBSc <= 2 ~ "illegal immigration concern",
+                                NATPROBSc >= 3 ~ "illegal immigration apathy"),
+            social4 = case_when(NATPROBSd <= 2 ~ "sexism concern",
+                                NATPROBSd >= 3 ~ "sexism apathy"),
+            social5 = case_when(NATPROBSe <= 2 ~ "drug concern",
+                                NATPROBSe >= 3 ~ "drug apathy"),
+            social6 = case_when(NATPROBSf <= 2 ~ "income gap concern",
+                                NATPROBSf >= 3 ~ "income gap apathy"),
+            social7 = case_when(NATPROBSg <= 2 ~ "gun concern",
+                                NATPROBSg >= 3 ~ "gun apathy"),
+            social8 = case_when(NATPROBSh <= 2 ~ "college cost concern",
+                                NATPROBSh >= 3 ~ "college cost apathy"),
+            social9 = case_when(NATPROBSi <= 2 ~ "climate change concern",
+                                NATPROBSi >= 3 ~ "climate change apathy"),
+            social10 = case_when(NATPROBSj <= 2 ~ "immigrants treatment concern",
+                                 NATPROBSj >= 3 ~ "immigrants treatment apathy"),
+            group1 = case_when(THERMOa < 50 ~ "negative to Republicans",
+                               THERMOa == 50 ~ "neutral to Republicans",
+                               THERMOa > 50 ~ "positive to Republicans"),
+            group2 = case_when(THERMOb < 50 ~ "negative to Democrats",
+                               THERMOb == 50 ~ "neutral to Democrats",
+                               THERMOb > 50 ~ "positive to Democrats"),
+            group3 = case_when(THERMOc < 50 ~ "negative to professors",
+                               THERMOc == 50 ~ "neutral to professors",
+                               THERMOc > 50 ~ "positive to professors"),
+            group4 = case_when(THERMOd < 50 ~ "negative to police",
+                               THERMOd == 50 ~ "neutral to police",
+                               THERMOd > 50 ~ "positive to police"),
+            group5 = case_when(THERMOe < 50 ~ "negative to journalists",
+                               THERMOe == 50 ~ "neutral to journalists",
+                               THERMOe > 50 ~ "positive to journalists"),
+            group6 = case_when(THERMOf < 50 ~ "negative to Muslims",
+                               THERMOf == 50 ~ "neutral to Muslims",
+                               THERMOf > 50 ~ "positive to Muslims"),
+            group7 = case_when(THERMOg < 50 ~ "negative to evangelists",
+                               THERMOg == 50 ~ "neutral to evangelists",
+                               THERMOg > 50 ~ "positive to evangelists"),
+            group8 = case_when(THERMOh < 50 ~ "negative to Catholics",
+                               THERMOh == 50 ~ "neutral to Catholics",
+                               THERMOh > 50 ~ "positive to Catholics"),
+            follow1 = case_when(QBELIEF3 == 1 ~ "follow similar politics",
+                                QBELIEF3 == 2 ~ "follow different politics",
+                                QBELIEF3 >= 3 ~ "mixed politics followed"),
+            follow2 = case_when(QBELIEF4 == 1 ~ "follow similar religion",
+                                QBELIEF4 == 2 ~ "follow different religion",
+                                QBELIEF4 >= 3 ~ "mixed religions followed"),
+            network = case_when(TWKNOW == 1 ~ "real-life friends",
+                                TWKNOW == 2 ~ "real-life strangers ",
+                                TWKNOW == 3 ~ "mixed in real life"),
+            partyaf = case_when(PARTY == 1 ~ "Republican",
+                                PARTY == 2 ~ "Democrat",
+                                PARTY >= 3 ~ "other affiliations"),
+            polarization = case_when(REPANTIP == 1 | DEMANTIP == 1 ~ "low polarization",
+                                     REPANTIP == 2 | DEMANTIP == 2 ~ "high polarization"),
+            activism1 = case_when(CIVIC_ENG_ACTYRa == 1 ~ "attend rally",
+                                  CIVIC_ENG_ACTYRa == 2 ~ "no rally"),
+            activism2 = case_when(CIVIC_ENG_ACTYRb == 1 ~ "contact elected",
+                                  CIVIC_ENG_ACTYRb == 2 ~ "no contact with elected"),
+            activism3 = case_when(CIVIC_ENG_ACTYRc == 1 ~ "contribute to candidate",
+                                  CIVIC_ENG_ACTYRc == 2 ~ "no contribution to candidate"),
+            religion = case_when(RELIMP <= 2 ~ "strong religious identity",
+                                 RELIMP >= 3 ~ "weak religious identity"))
+```
+
+```{r}
+write.table(response, "response.csv", sep = ",", row.names = F, col.names = F)
+survey <- read.transactions("response.csv", sep = ",")
+summary(survey)
+```
+
+```{r}
+res1 <- response %>%
+  select(partyaf, polarization, twitter1, twitter2, religion, trump, fair_race, fair_gender, fair_culture, fair_econ, offense_language, social1, social2, social3, social4, social5, social6, social7, social8, social9, social10)
+
+write.table(res1, "social_responses.csv", sep = ",", row.names = F, col.names = F)
+social_survey <- read.transactions("social_responses.csv", sep = ",")
+summary(social_survey)
+```
+
+```{r}
+res2 <- response %>%
+  select(partyaf, polarization, twitter1, twitter2, religion, social_trust, community, fairness, assistance, network, follow1, follow2, activism1, activism2, activism3, trump)
+
+write.table(res2, "trust_responses.csv", sep = ",", row.names = F, col.names = F)
+trust_survey <- read.transactions("trust_responses.csv", sep = ",")
+summary(trust_survey)
+```
+
+```{r}
+res3 <- response %>%
+  select(partyaf, polarization, twitter1, twitter2, religion, trump, congress1, congress2, congress3, congress4, congress5)
+
+write.table(res3, "congress_responses.csv", sep = ",", row.names = F, col.names = F)
+congress_survey <- read.transactions("congress_responses.csv", sep = ",")
+```
+
+```{r}
+social_rules <- apriori(social_survey,
+                   parameter = list(support = 0.1,
+                                    confidence = 0.5,
+                                    minlen = 2)); summary(social_rules)
+```
+
+```{r}
+trust_rules <- apriori(trust_survey,
+                       parameter = list(support = 0.1,
+                                    confidence = 0.5,
+                                    minlen = 2)); summary(trust_rules)
+```
+
+```{r}
+congress_rules <- apriori(congress_survey,
+                       parameter = list(support = 0.1,
+                                    confidence = 0.5,
+                                    minlen = 2)); summary(congress_rules)
+```
+
+```{r}
+inspect(sort(social_rules, by = "lift")[1:10])
+```
+
+```{r}
+inspect(sort(trust_rules, by = "lift")[1:10])
+```
+
+```{r}
+inspect(sort(congress_rules, by = "lift")[1:10])
+```
+
+```{r}
+trust <- subset(trust_rules,
+                      lhs %in% "high trust" &
+                        rhs %in% c("high polarization", "low polarization") &
+                        lift > 1.25); inspect(sort(trust[1:5], by = "confidence"))
+```
+
+```{r}
+attachment <- subset(trust_rules,
+                      lhs %in% "high attachment" &
+                       rhs %in% c("high polarization", "low polarization") &
+                        lift > 1.25); inspect(sort(attachment[1:5], by = "confidence"))
+```
+High social trust and high community attachment associate with low polarization.
+
+```{r}
+trump_1 <- subset(social_rules,
+                rhs %in% c("offensive", "defensive") &
+                  lhs %in% "Trump adversary" &
+                  lift > 1.5); inspect(sort(trump_1[1:5], by = "confidence"))
+```
+
+```{r}
+trump_2 <- subset(social_rules,
+                rhs %in% c("offensive", "defensive") &
+                  lhs %in% "Trump supporter" &
+                  lift > 1.5); inspect(sort(trump_2[1:5], by = "confidence"))
+```
+
+Trump supporters tend to feel that too many people today are easily offended over the language that others use; while Trump adversaries tends to feel that people need to be more careful and avoid using offensive language.
+
+```{r}
+twitter_use <- subset(social_rules,
+                       rhs %in% c("low polarization") &
+                         lhs %in% c("never tweet", "infrequent use") &
+                         lift > 1.2); inspect(sort(twitter_use[1:5], by = "confidence"))
+```
+There are strong associations between infrequent use of Twitter and low polarization.
+
+```{r}
+congress_trust <- subset(congress_rules,
+                         lhs %in% "Trump supporter" &
+                           rhs %in% c("fair distribution", "unfair distribution") &
+                           lift > 1.5); inspect(sort(congress_trust[1:5], by = "confidence"))
+```
+Trump supporters have strong associations with both cases. It depends on the view of other trust issues of the congress.

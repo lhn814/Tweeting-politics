@@ -1,0 +1,547 @@
+---
+title: "draft_final_project"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning=FALSE, message=FALSE}
+library(haven)
+library(tidyverse)
+library(tidyverse)
+library(amerika)
+library(tictoc)
+library(kohonen)
+
+dataset <- read_sav("~/Desktop/Spring2021/Unsupervised-learning/Proposal/Twitter_survey_2018/dataset.sav")
+
+survey <- dataset %>%
+  select(SOCTRUST2, COMATTACH, GSSTRUST2, GSSTRUST3, # social trust questions (group)
+         TRUSTCONGa, TRUSTCONGb, TRUSTCONGc, TRUSTCONGd, TRUSTCONGe,  # legislator responsiveness (group)
+         TWITTER_USE, POLTWEET, # twitter usage
+         POL1DT, FAIRTRT, WOMENOPPS, IMMCULT2, ECONFAIR2, POLCRCT, 
+         NATPROBSa, NATPROBSb, NATPROBSc, NATPROBSd, NATPROBSe, NATPROBSf,
+         NATPROBSg, NATPROBSh, NATPROBSi, NATPROBSj, # attitudes towards various issues (group)
+         THERMOa, THERMOb, THERMOc, THERMOd, THERMOe, THERMOf, THERMOg, THERMOh, # feeling thermometer (group)
+         QBELIEF3, QBELIEF4, TWKNOW, # friends on twitter
+         PARTY, REPANTIP, DEMANTIP, # party affiliation (layer)
+         CIVIC_ENG_ACTYRa, CIVIC_ENG_ACTYRb, CIVIC_ENG_ACTYRc, # physical activities
+         RELIMP, # religion identity (layer)
+         ) %>%
+  mutate_all(funs(as.numeric(as.character(.)))) %>%
+  mutate(strong_reli_ident = case_when(RELIMP == 1 ~ 1, RELIMP == 2 ~ 1, TRUE ~ 0),
+         party = case_when(PARTY == 1 ~ "Republican", PARTY == 2 ~ "Democrat", TRUE ~ "Others"),
+         polar = ifelse(is.na(REPANTIP), 
+                        case_when(DEMANTIP == 1 ~ 1,
+                                  DEMANTIP == 2 ~ 2,
+                                  DEMANTIP == 3 ~ 3,
+                                  is.na(DEMANTIP) ~ 3),
+                        case_when(REPANTIP == 1 ~ 1,
+                                  REPANTIP == 2 ~ 2,
+                                  REPANTIP == 3 ~ 3,
+                                  is.na(REPANTIP) ~ 3))) %>%
+  as.data.frame()
+
+survey$party <- as.factor(survey$party)
+skimr::skim(survey)
+```
+
+(1) Legislator responsiveness
+
+```{r}
+# clean legislator responsiveness variables
+respon_scaled <- survey %>%
+  select(TRUSTCONGa, TRUSTCONGb, TRUSTCONGc, TRUSTCONGd, TRUSTCONGe) %>%
+  as.data.frame() %>%
+  scale()
+```
+
+```{r}
+# create the structure of the output layer; 
+# specify the dimensions of the grid to search
+search_grid1 <- somgrid(xdim = 10, 
+                        ydim = 10, 
+                        topo = "rectangular",
+                        neighbourhood.fct = "gaussian")
+# initialize the gridsearch table to store all combinations of the hyperparameters.
+gridsearch_som1 <- tibble()
+# Here, we use the for loop because we want to select the best hyperparameters
+{
+  tic()
+  for (alpha in c(0.1,0.3,0.5)){
+    for (radius in c(0.5,1,1.5)){
+      for (rlen in c(300,500,700)){
+        som_fit1 <- som(respon_scaled,
+                       grid = search_grid1,
+                       # we set the lower bound of the learning rate to be 
+                       # 1/100 of the original one
+                       alpha = c(alpha, alpha/100),
+                       radius = radius, # neighborhood size
+                       rlen = rlen,  # number of epochs (# sees the data)
+                       dist.fcts = "euclidean", 
+                       mode = "batch") 
+        gridsearch_som1 <- rbind(gridsearch_som1, 
+                                c(alpha, radius, rlen, min(som_fit1$changes)))
+      }
+    }
+  }
+  toc()
+}
+
+names(gridsearch_som1) <- c("initial_alpha", "initial_radius", "iterations", 
+                           "mean_distance_to_closest_nodes")
+
+# refit the SOM using the best combination of hyperparameters
+{
+  tic()
+  
+best_alpha1 <- gridsearch_som1[which.min(gridsearch_som1$mean_distance_to_closest_nodes),
+                             "initial_alpha"]
+best_radius1 <- gridsearch_som1[which.min(gridsearch_som1$mean_distance_to_closest_nodes),
+                              "initial_radius"]
+best_rlen1 <- gridsearch_som1[which.min(gridsearch_som1$mean_distance_to_closest_nodes),
+                            "iterations"]
+som_fit1 <- som(respon_scaled,
+               grid = search_grid1,
+               alpha = c(best_alpha1, best_alpha1/100),
+               radius = best_radius1, 
+               rlen = best_rlen1,
+               dist.fcts = "euclidean", 
+               mode = "batch") 
+  toc()
+} 
+```
+
+
+```{r}
+set.seed(123)
+# clustering from SOM via k-means (hard)
+point_colors1 <- c(amerika_palettes$Democrat[2], 
+                  amerika_palettes$Republican[2], "#FFFAFA")
+neuron_colors1 <- c(amerika_palettes$Republican[3], 
+                   amerika_palettes$Democrat[3])
+## k-means
+kmeans_clusters1 <- som_fit1$codes[[1]] %>% 
+  kmeans(., centers = 2)
+# circle color: true labels of democrat and non-democrat
+# bg color: provided by clustering method
+# boundaries: provided by clustering method 
+plot(som_fit1, 
+     type = "mapping", 
+     pch = 21, 
+     bg = point_colors1[as.factor(survey$POL1DT)],
+     shape = "straight",
+     bgcol = neuron_colors1[as.integer(kmeans_clusters1$cluster)],
+     main = "2 clusters via k-means"); 
+add.cluster.boundaries(x = som_fit1, clustering = kmeans_clusters1$cluster, 
+                                                      lwd = 5, lty = 5)
+```
+
+(2) the equality and diversity of communities
+
+```{r}
+attitude_scaled <- survey %>%
+  select(FAIRTRT, WOMENOPPS, IMMCULT2, ECONFAIR2, POLCRCT) %>%
+  as.data.frame() %>% 
+  scale()
+```
+
+```{r}
+# create the structure of the output layer; 
+# specify the dimensions of the grid to search
+search_grid2 <- somgrid(xdim = 10, 
+                        ydim = 10, 
+                        topo = "rectangular",
+                        neighbourhood.fct = "gaussian")
+# initialize the gridsearch table to store all combinations of the hyperparameters.
+gridsearch_som2 <- tibble()
+# Here, we use the for loop because we want to select the best hyperparameters
+{
+  tic()
+  for (alpha in c(0.1,0.3,0.5)){
+    for (radius in c(0.5,1,1.5)){
+      for (rlen in c(300,500,700)){
+        som_fit2 <- som(attitude_scaled,
+                       grid = search_grid2,
+                       # we set the lower bound of the learning rate to be 
+                       # 1/100 of the original one
+                       alpha = c(alpha, alpha/100),
+                       radius = radius, # neighborhood size
+                       rlen = rlen,  # number of epochs (# sees the data)
+                       dist.fcts = "euclidean", 
+                       mode = "batch") 
+        gridsearch_som2 <- rbind(gridsearch_som2, 
+                                c(alpha, radius, rlen, min(som_fit2$changes)))
+      }
+    }
+  }
+  toc()
+}
+
+names(gridsearch_som2) <- c("initial_alpha", "initial_radius", "iterations", 
+                           "mean_distance_to_closest_nodes")
+
+# refit the SOM using the best combination of hyperparameters
+{
+  tic()
+  
+best_alpha2 <- gridsearch_som2[which.min(gridsearch_som2$mean_distance_to_closest_nodes),
+                             "initial_alpha"]
+best_radius2 <- gridsearch_som2[which.min(gridsearch_som2$mean_distance_to_closest_nodes),
+                              "initial_radius"]
+best_rlen2 <- gridsearch_som2[which.min(gridsearch_som2$mean_distance_to_closest_nodes),
+                            "iterations"]
+som_fit2 <- som(attitude_scaled,
+               grid = search_grid2,
+               alpha = c(best_alpha2, best_alpha2/100),
+               radius = best_radius2, 
+               rlen = best_rlen2,
+               dist.fcts = "euclidean", 
+               mode = "batch") 
+  toc()
+} 
+```
+
+```{r}
+set.seed(123)
+# clustering from SOM via k-means (hard)
+point_colors2 <- c(amerika_palettes$Democrat[2], 
+                  amerika_palettes$Republican[2], "#FFFAFA")
+neuron_colors2 <- c(amerika_palettes$Democrat[3],
+                    amerika_palettes$Republican[3])
+## k-means
+kmeans_clusters2 <- som_fit2$codes[[1]] %>% 
+  kmeans(., centers = 2)
+# circle color: true labels of democrat and non-democrat
+# bg color: provided by clustering method
+# boundaries: provided by clustering method 
+plot(som_fit2, 
+     type = "mapping", 
+     pch = 21, 
+     bg = point_colors2[as.factor(survey$POL1DT)],
+     shape = "straight",
+     bgcol = neuron_colors2[as.integer(kmeans_clusters2$cluster)],
+     main = "The Equality and Diversity of Communities"); 
+add.cluster.boundaries(x = som_fit2, clustering = kmeans_clusters2$cluster, 
+                                                      lwd = 5, lty = 5)
+```
+
+(3) Social issues
+
+```{r}
+nat_scaled <- survey %>%
+  select(NATPROBSa, NATPROBSb, NATPROBSc, NATPROBSd, NATPROBSe, NATPROBSf,
+         NATPROBSg, NATPROBSh, NATPROBSi, NATPROBSj) %>%
+  as.data.frame() %>% 
+  scale()
+```
+
+```{r}
+# create the structure of the output layer; 
+# specify the dimensions of the grid to search
+search_grid3 <- somgrid(xdim = 10, 
+                        ydim = 10, 
+                        topo = "rectangular",
+                        neighbourhood.fct = "gaussian")
+# initialize the gridsearch table to store all combinations of the hyperparameters.
+gridsearch_som3 <- tibble()
+# Here, we use the for loop because we want to select the best hyperparameters
+{
+  tic()
+  for (alpha in c(0.1,0.3,0.5)){
+    for (radius in c(0.5,1,1.5)){
+      for (rlen in c(300,500,700)){
+        som_fit3 <- som(nat_scaled,
+                       grid = search_grid3,
+                       # we set the lower bound of the learning rate to be 
+                       # 1/100 of the original one
+                       alpha = c(alpha, alpha/100),
+                       radius = radius, # neighborhood size
+                       rlen = rlen,  # number of epochs (# sees the data)
+                       dist.fcts = "euclidean", 
+                       mode = "batch") 
+        gridsearch_som3 <- rbind(gridsearch_som3, 
+                                c(alpha, radius, rlen, min(som_fit$changes)))
+      }
+    }
+  }
+  toc()
+}
+
+names(gridsearch_som3) <- c("initial_alpha", "initial_radius", "iterations", 
+                           "mean_distance_to_closest_nodes")
+
+# refit the SOM using the best combination of hyperparameters
+{
+  tic()
+  
+best_alpha3 <- gridsearch_som3[which.min(gridsearch_som3$mean_distance_to_closest_nodes),
+                             "initial_alpha"]
+best_radius3 <- gridsearch_som3[which.min(gridsearch_som3$mean_distance_to_closest_nodes),
+                              "initial_radius"]
+best_rlen3 <- gridsearch_som3[which.min(gridsearch_som3$mean_distance_to_closest_nodes),
+                            "iterations"]
+som_fit3 <- som(nat_scaled,
+               grid = search_grid3,
+               alpha = c(best_alpha3, best_alpha3/100),
+               radius = best_radius3, 
+               rlen = best_rlen3,
+               dist.fcts = "euclidean", 
+               mode = "batch") 
+  toc()
+} 
+```
+
+```{r}
+set.seed(123)
+# clustering from SOM via k-means (hard)
+point_colors3 <- c(amerika_palettes$Democrat[2],
+                   amerika_palettes$Republican[2],"#FFFAFA")
+neuron_colors3 <- c(amerika_palettes$Republican[3], 
+                   amerika_palettes$Democrat[3])
+## k-means
+kmeans_clusters3 <- som_fit3$codes[[1]] %>% 
+  kmeans(., centers = 2)
+# circle color: true labels of democrat and non-democrat
+# bg color: provided by clustering method
+# boundaries: provided by clustering method 
+plot(som_fit3, 
+     type = "mapping", 
+     pch = 21, 
+     bg = point_colors3[as.factor(survey$POL1DT)],
+     shape = "straight",
+     bgcol = neuron_colors3[as.integer(kmeans_clusters3$cluster)],
+     main = "Attitudes towards salient social issues"); 
+add.cluster.boundaries(x = som_fit3, clustering = kmeans_clusters3$cluster, 
+                                                      lwd = 5, lty = 5)
+```
+
+```{r}
+set.seed(123)
+# clustering from SOM via k-means (hard)
+point_colors3 <- c(amerika_palettes$Democrat[2],
+                   amerika_palettes$Republican[2],"#FFFAFA")
+neuron_colors3 <- c(amerika_palettes$Democrat[3],
+                    amerika_palettes$Republican[3])
+## k-means
+kmeans_clusters3 <- som_fit3$codes[[1]] %>% 
+  kmeans(., centers = 2)
+# circle color: true labels of democrat and non-democrat
+# bg color: provided by clustering method
+# boundaries: provided by clustering method 
+plot(som_fit3, 
+     type = "mapping", 
+     pch = 21, 
+     bg = point_colors3[as.factor(survey$party)],
+     shape = "straight",
+     bgcol = neuron_colors3[as.integer(kmeans_clusters3$cluster)],
+     main = "Attitudes towards salient social issues"); 
+add.cluster.boundaries(x = som_fit3, clustering = kmeans_clusters3$cluster, 
+                                                      lwd = 5, lty = 5)
+```
+
+(4) feeling thermometer
+
+```{r}
+thermo_scaled <- survey %>%
+  select(THERMOa, THERMOb, THERMOc, THERMOd, THERMOe, 
+         THERMOf, THERMOg, THERMOh) %>%
+  as.data.frame() %>% 
+  scale()
+```
+
+```{r}
+# create the structure of the output layer; 
+# specify the dimensions of the grid to search
+search_grid4 <- somgrid(xdim = 10, 
+                       ydim = 10, 
+                       topo = "rectangular",
+                       neighbourhood.fct = "gaussian")
+# initialize the gridsearch table to store all combinations of the hyperparameters.
+gridsearch_som4 <- tibble()
+# Here, we use the for loop because we want to select the best hyperparameters
+{
+  tic()
+  for (alpha in c(0.1,0.3,0.5)){
+    for (radius in c(0.5,1,1.5)){
+      for (rlen in c(300,500,700)){
+        som_fit4 <- som(thermo_scaled,
+                       grid = search_grid4,
+                       # we set the lower bound of the learning rate to be 
+                       # 1/100 of the original one
+                       alpha = c(alpha, alpha/100),
+                       radius = radius, # neighborhood size
+                       rlen = rlen,  # number of epochs (# sees the data)
+                       dist.fcts = "euclidean", 
+                       mode = "batch") 
+        gridsearch_som4 <- rbind(gridsearch_som4, 
+                                c(alpha, radius, rlen, min(som_fit4$changes)))
+      }
+    }
+  }
+  toc()
+}# ~3mins
+
+names(gridsearch_som4) <- c("initial_alpha", "initial_radius", "iterations", 
+                           "mean_distance_to_closest_nodes")
+
+# refit the SOM using the best combination of hyperparameters
+{
+  tic()
+  
+best_alpha4 <- gridsearch_som4[which.min(gridsearch_som4$mean_distance_to_closest_nodes),
+                             "initial_alpha"]
+best_radius4 <- gridsearch_som4[which.min(gridsearch_som4$mean_distance_to_closest_nodes),
+                              "initial_radius"]
+best_rlen4 <- gridsearch_som4[which.min(gridsearch_som4$mean_distance_to_closest_nodes),
+                            "iterations"]
+som_fit4 <- som(thermo_scaled,
+               grid = search_grid4,
+               alpha = c(best_alpha4, best_alpha4/100),
+               radius = best_radius4, 
+               rlen = best_rlen4,
+               dist.fcts = "euclidean", 
+               mode = "batch") 
+  toc()
+} 
+```
+
+```{r}
+set.seed(123)
+# clustering from SOM via k-means (hard)
+point_colors4 <- c(amerika_palettes$Republican[2], "#FFFAFA",
+                  amerika_palettes$Democrat[2])
+neuron_colors4 <- c(amerika_palettes$Republican[3], 
+                   amerika_palettes$Democrat[3])
+## k-means
+kmeans_clusters4 <- som_fit4$codes[[1]] %>% 
+  kmeans(., centers = 2)
+# circle color: true labels of democrat and non-democrat
+# bg color: provided by clustering method
+# boundaries: provided by clustering method 
+plot(som_fit4, 
+     type = "mapping", 
+     pch = 21, 
+     bg = point_colors4[as.factor(survey$party)],
+     shape = "straight",
+     bgcol = neuron_colors4[as.integer(kmeans_clusters4$cluster)],
+     main = "feeling thermometer by party"); 
+add.cluster.boundaries(x = som_fit4, clustering = kmeans_clusters4$cluster, 
+                                                      lwd = 5, lty = 5)
+```
+
+```{r}
+set.seed(123)
+# clustering from SOM via k-means (hard)
+point_colors4 <- c(amerika_palettes$Republican[2],
+                  amerika_palettes$Democrat[2])
+neuron_colors4 <- c(amerika_palettes$Democrat[3],
+                    amerika_palettes$Republican[3])
+## k-means
+kmeans_clusters4 <- som_fit4$codes[[1]] %>% 
+  kmeans(., centers = 2)
+# circle color: true labels of democrat and non-democrat
+# bg color: provided by clustering method
+# boundaries: provided by clustering method 
+plot(som_fit4, 
+     type = "mapping", 
+     pch = 21, 
+     bg = point_colors4[as.factor(survey$POL1DT)],
+     shape = "straight",
+     bgcol = neuron_colors4[as.integer(kmeans_clusters4$cluster)],
+     main = "feeling thermometer by Trump"); 
+add.cluster.boundaries(x = som_fit4, clustering = kmeans_clusters4$cluster, 
+                                                      lwd = 5, lty = 5)
+```
+
+(5) physical activity
+
+```{r}
+physical_scaled <- survey %>%
+  select(CIVIC_ENG_ACTYRa, CIVIC_ENG_ACTYRb, CIVIC_ENG_ACTYRc) %>%
+  as.data.frame() %>% 
+  scale()
+```
+
+```{r}
+# create the structure of the output layer; 
+# specify the dimensions of the grid to search
+search_grid5 <- somgrid(xdim = 10, 
+                       ydim = 10, 
+                       topo = "rectangular",
+                       neighbourhood.fct = "gaussian")
+# initialize the gridsearch table to store all combinations of the hyperparameters.
+gridsearch_som5 <- tibble()
+# Here, we use the for loop because we want to select the best hyperparameters
+{
+  tic()
+  for (alpha in c(0.1,0.3,0.5)){
+    for (radius in c(0.5,1,1.5)){
+      for (rlen in c(300,500,700)){
+        som_fit5 <- som(physical_scaled,
+                       grid = search_grid5,
+                       # we set the lower bound of the learning rate to be 
+                       # 1/100 of the original one
+                       alpha = c(alpha, alpha/100),
+                       radius = radius, # neighborhood size
+                       rlen = rlen,  # number of epochs (# sees the data)
+                       dist.fcts = "euclidean", 
+                       mode = "batch") 
+        gridsearch_som5 <- rbind(gridsearch_som5, 
+                                c(alpha, radius, rlen, min(som_fit5$changes)))
+      }
+    }
+  }
+  toc()
+}# ~3mins
+
+names(gridsearch_som5) <- c("initial_alpha", "initial_radius", "iterations", 
+                           "mean_distance_to_closest_nodes")
+
+# refit the SOM using the best combination of hyperparameters
+{
+  tic()
+  
+best_alpha5 <- gridsearch_som5[which.min(gridsearch_som5$mean_distance_to_closest_nodes),
+                             "initial_alpha"]
+best_radius5 <- gridsearch_som5[which.min(gridsearch_som5$mean_distance_to_closest_nodes),
+                              "initial_radius"]
+best_rlen5 <- gridsearch_som5[which.min(gridsearch_som5$mean_distance_to_closest_nodes),
+                            "iterations"]
+som_fit5 <- som(physical_scaled,
+               grid = search_grid5,
+               alpha = c(best_alpha5, best_alpha5/100),
+               radius = best_radius5, 
+               rlen = best_rlen5,
+               dist.fcts = "euclidean", 
+               mode = "batch") 
+  toc()
+} 
+```
+
+```{r}
+set.seed(123)
+# clustering from SOM via k-means (hard)
+point_colors5 <- c(amerika_palettes$Republican[2],
+                  amerika_palettes$Democrat[2])
+neuron_colors5 <- c(amerika_palettes$Democrat[3],
+                    amerika_palettes$Republican[3])
+## k-means
+kmeans_clusters5 <- som_fit5$codes[[1]] %>% 
+  kmeans(., centers = 2)
+# circle color: true labels of democrat and non-democrat
+# bg color: provided by clustering method
+# boundaries: provided by clustering method 
+plot(som_fit5, 
+     type = "mapping", 
+     pch = 21, 
+     bg = point_colors5[as.factor(survey$POLTWEET)],
+     shape = "straight",
+     bgcol = neuron_colors5[as.integer(kmeans_clusters5$cluster)],
+     main = "feeling thermometer by Trump"); 
+add.cluster.boundaries(x = som_fit5, clustering = kmeans_clusters5$cluster, 
+                                                      lwd = 5, lty = 5)
+```
+
